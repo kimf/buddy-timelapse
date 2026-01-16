@@ -1,5 +1,7 @@
 # Prusa Timelapse
 
+[![Certified Shovelware](https://justin.searls.co/img/shovelware.svg)](https://justin.searls.co/shovelware/)
+
 A TypeScript CLI service that automatically monitors PrusaLink API for print jobs and creates timelapse videos using RTSP camera feeds.
 
 ## Features
