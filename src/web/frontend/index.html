@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Prusa Timelapse</title>
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+
+<header>
+  <h1>Prusa Timelapse</h1>
+  <span id="status-pill">—</span>
+</header>
+
+<main>
+
+  <section class="camera-section">
+    <h2>Live Camera</h2>
+    <div class="camera-card">
+      <div class="camera-media">
+        <img id="camera-img" src="/api/camera.jpg" alt="Camera feed">
+        <video id="camera-video" autoplay muted playsinline></video>
+      </div>
+      <div class="progress-wrap" id="progress-wrap">
+        <div class="progress-label">
+          <span>Print progress</span>
+          <span id="progress-pct">0%</span>
+        </div>
+        <div class="progress-bar">
+          <div class="progress-fill" id="progress-fill"></div>
+        </div>
+      </div>
+      <div class="camera-footer">
+        <button id="live-btn" class="btn-live">&#9654; Go Live</button>
+        <span id="camera-ts">—</span>
+      </div>
+    </div>
+  </section>
+
+  <section class="videos-section">
+    <h2>Timelapses <span id="video-count"></span></h2>
+    <div class="card-grid" id="videos">
+      <p class="empty">Loading…</p>
+    </div>
+  </section>
+
+  <section class="status-section">
+    <h2>Printer Status</h2>
+    <div class="status-card">
+
+      <div class="stat-row">
+        <div class="stat-icon">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 42.47 42.47">
+            <path style="fill:#FA6831" d="M0 0h42.47v42.47H0z"/>
+            <path style="fill:#2b2a29;fill-rule:nonzero" d="M13.48 36.05h19.71v-6.08H20.55V8.93h-7.07z"/>
+            <path style="fill:#fefefe;fill-rule:nonzero" d="M12.23 34.79h19.71v-6.07H19.29V7.68h-7.06z"/>
+          </svg>
+        </div>
+        <div class="stat-body">
+          <div class="stat-label">Printer Status</div>
+          <div class="stat-value" id="sv-state">—</div>
+        </div>
+      </div>
+
+      <div class="stat-row">
+        <div class="stat-icon">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 7.2 8.97">
+            <path d="M4.16 4.4v1.1a.56.56 0 0 1-.56.56H1.12v.34h5.53a.56.56 0 0 1 .56.56v1.45a.56.56 0 0 1-.56.56H.57a.56.56 0 1 1 0-1.12H6.1v-.34H.57a.56.56 0 0 1-.56-.56V5.5a.56.56 0 0 1 .56-.56h2.48V4.4h1.12z" fill="#FA6831"/>
+            <path d="M6.13 0v2.06L4.34 4.4H2.86l-1.8-2.33V0H2.2v1.68l1.2 1.6h.4L5 1.68V0z" fill="#fff"/>
+          </svg>
+        </div>
+        <div class="stat-body">
+          <div class="stat-label">Nozzle Temperature</div>
+          <div class="stat-value" id="sv-nozzle">—</div>
+        </div>
+      </div>
+
+      <div class="stat-row">
+        <div class="stat-icon">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10.08 8.18">
+            <path d="M3.12 5.02c-.8-.78-.9-1.24-.2-2.13.24-.3.35-.62.35-.92C3.27 1.34 2.8.72 2.2 0l-.95.9c.9 1.05.82 1.16.17 2.08-.2.3-.3.6-.3.9 0 .76.57 1.48 1.1 2.02l.9-.87zm5.7 0c-.8-.78-.9-1.24-.2-2.13.24-.3.35-.62.35-.92C8.96 1.34 8.5.72 7.9 0l-.95.9c.9 1.05.82 1.16.17 2.08-.2.3-.3.6-.3.9 0 .76.57 1.48 1.1 2.02l.9-.87zm-2.88 0c-.8-.78-.9-1.24-.2-2.13.24-.3.35-.62.35-.92 0-.63-.46-1.25-1.06-1.97l-.95.9c.9 1.05.82 1.16.17 2.08-.2.3-.3.6-.3.9 0 .76.57 1.48 1.1 2.02l.9-.87z" fill="#FA6831"/>
+            <path d="M0 6.8h10.08v1.4H0z" fill="#fff"/>
+          </svg>
+        </div>
+        <div class="stat-body">
+          <div class="stat-label">Heatbed</div>
+          <div class="stat-value" id="sv-bed">—</div>
+        </div>
+      </div>
+
+      <div class="stat-row">
+        <div class="stat-icon">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1028.03 771.02">
+            <path d="M1028.03 514c0 93.56-25.1 181.33-68.97 256.96L884.7 728c36.46-63 57.65-135.96 57.65-214C942.35 277.42 750.6 85.66 514 85.66 277.44 85.66 85.68 277.42 85.68 514c0 78.05 21.2 151 57.65 214l-74.36 42.97C25.1 695.32 0 607.55 0 514 0 230.6 230.6 0 514 0c283.43 0 514.02 230.6 514.02 514zM514 771.02c-55.43 0-100.35-44.92-100.35-100.35 0-37.82 20.95-70.76 51.82-87.86L514 342.67l48.54 240.08c30.92 17.1 51.82 50.03 51.82 87.86 0 55.47-44.92 100.4-100.36 100.4z" fill="#fff"/>
+            <path d="M541.77 156.87c-9.37-.78-18.7-1.1-27.8-1.1-9.08 0-18.46.4-27.84 1.1v119.25c9.26-1.06 18.6-1.63 27.84-1.63 9.26 0 18.6.5 27.8 1.63V156.87zM789.83 287.9a377.26 377.26 0 0 0-39.32-40.99l-80.97 84.35c14.52 12.08 27.72 25.87 39.32 41l80.97-84.35zm-111.4-91.23c-16.58-8.77-33.84-16.23-51.4-22.22l-43.86 110.22a240.68 240.68 0 0 1 51.4 22.22l43.86-110.22zM274.3 462.24c5.18-18.63 12.33-36.6 21.34-53.54l-105.77-45.65a384.14 384.14 0 0 0-21.34 53.53l105.77 45.65zm118.2-154.9a240.824 240.824 0 0 1 51.32-22.4l-44.3-110.04a357.044 357.044 0 0 0-51.32 22.44l44.3 110zm-73.47 64.9a254.052 254.052 0 0 1 39.38-41l-80.97-84.35c-14.05 12.6-27.28 26.34-39.32 41l80.9 84.35zm538.57 38.68c-6.04-18.3-13.45-36.15-22.1-53.2L730.37 405.1c9.3 16.87 16.7 34.7 22.15 53.2l105.07-47.37z" fill="#FA6831"/>
+          </svg>
+        </div>
+        <div class="stat-body">
+          <div class="stat-label">Printing Speed</div>
+          <div class="stat-value" id="sv-speed">—</div>
+        </div>
+      </div>
+
+      <div class="stat-row">
+        <div class="stat-icon">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 205.88 205.69">
+            <path d="M39.04 71.14 54.1 56.07l48.84 49.72 48.8-49.72 15.06 15.07-63.86 64.78z" fill="#FA6831"/>
+            <path d="M76.86 54.62 113 10.9H77.85V0h49.5v9.37l-35 43.73h35.25V64H76.86zM0 177.2h205.88v28.5H0z" fill="#fff"/>
+          </svg>
+        </div>
+        <div class="stat-body">
+          <div class="stat-label">Z-Height</div>
+          <div class="stat-value" id="sv-z">—</div>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <section class="recovered-section">
+    <h2>Recovered <span id="recovered-count"></span></h2>
+    <div class="card-grid" id="recovered">
+      <p class="empty">None</p>
+    </div>
+  </section>
+
+</main>
+
+<script type="module" src="./main.ts"></script>
+</body>
+</html>

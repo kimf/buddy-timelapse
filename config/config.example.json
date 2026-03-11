@@ -15,5 +15,6 @@
     "command": "echo 'Timelapse completed: {outputPath}'"
   },
   "pollInterval": 10,
-  "watchdogTimeout": 3600
+  "watchdogTimeout": 3600,
+  "webPort": 3000
 }

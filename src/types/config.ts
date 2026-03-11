@@ -22,4 +22,5 @@ export interface AppConfig {
   notification: NotificationConfig;
   pollInterval: number; // seconds between API polls
   watchdogTimeout: number; // seconds without seeing PRINTING state before auto-stopping capture (0 = disabled)
+  webPort?: number; // port for the web UI (default: 3000, 0 = disabled)
 }

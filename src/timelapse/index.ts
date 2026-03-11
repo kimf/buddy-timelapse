@@ -1,5 +1,5 @@
 import { ChildProcess, spawn } from "child_process";
-import { mkdirSync, readdirSync, unlinkSync } from "fs";
+import { mkdirSync, readdirSync, renameSync } from "fs";
 import { dirname, join, resolve } from "path";
 import { TimelapseConfig } from "../types/config";
 
@@ -35,8 +35,8 @@ export class TimelapseCapture {
       );
     }
 
-    // Clear any existing images in temp directory
-    this.clearTempDirectory();
+    // Move any orphaned frames from a previous crashed run to a recovery directory
+    this.rescueOrphanedFrames();
 
     // Start ffmpeg capture process
     const outputPattern = join(this.tempDir, "img_%05d.jpg");
@@ -122,16 +122,33 @@ export class TimelapseCapture {
     return this.isCapturing;
   }
 
-  private clearTempDirectory(): void {
+  private rescueOrphanedFrames(): void {
     try {
       const files = readdirSync(this.tempDir);
-      for (const file of files) {
-        if (file.startsWith("img_") && file.endsWith(".jpg")) {
-          unlinkSync(join(this.tempDir, file));
-        }
+      const frames = files.filter(
+        (f) => f.startsWith("img_") && f.endsWith(".jpg")
+      );
+      if (frames.length === 0) return;
+
+      const timestamp = new Date()
+        .toISOString()
+        .replace(/[:.]/g, "-")
+        .slice(0, -5);
+      const recoveryDir = join(this.tempDir, "recovered", timestamp);
+      mkdirSync(recoveryDir, { recursive: true });
+
+      for (const file of frames) {
+        renameSync(join(this.tempDir, file), join(recoveryDir, file));
       }
+
+      console.warn(
+        `Rescued ${frames.length} orphaned frames to: ${recoveryDir}`
+      );
     } catch (error) {
-      // Directory might not exist or be empty, ignore
+      // Non-fatal: log and continue so capture can still start
+      console.error(
+        `Failed to rescue orphaned frames: ${(error as Error).message}`
+      );
     }
   }
 

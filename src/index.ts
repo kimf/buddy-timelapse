@@ -3,6 +3,7 @@
 import { resolve } from "path";
 import { ConfigError, loadConfig } from "./config";
 import { MonitorError, PrintMonitor } from "./monitor";
+import { createWebServer } from "./web/server";
 
 // Parse command line arguments
 function parseArgs(): { configPath: string } {
@@ -55,6 +56,12 @@ async function main(): Promise<void> {
     // Start monitoring
     console.log("Starting monitoring service...");
     await monitor.startMonitoring();
+
+    // Start web UI (disabled if webPort is 0)
+    const webPort = config.webPort ?? 3000;
+    if (webPort > 0) {
+      createWebServer(config, webPort);
+    }
 
     console.log("Service started successfully. Press Ctrl+C to stop.");
     console.log(`Polling interval: ${config.pollInterval} seconds`);

@@ -21,6 +21,7 @@ export class PrintMonitor {
   private monitoringInterval: NodeJS.Timeout | null = null;
   private lastPrinterState: PrinterState | null = null;
   private watchdogExpiry: number | null = null; // timestamp when watchdog expires
+  private isHandlingCompletion = false;
 
   constructor(config: AppConfig) {
     this.config = config;
@@ -140,17 +141,22 @@ export class PrintMonitor {
   }
 
   private async handlePrintFinished(jobId: number | null): Promise<void> {
-    console.log(`Print finished (Job ID: ${jobId})`);
-
-    // Clear watchdog since printing finished normally
-    this.clearWatchdog();
-
-    if (!this.timelapseCapture.isCurrentlyCapturing()) {
-      console.log("No active timelapse capture to stop");
+    if (this.isHandlingCompletion) {
+      console.log("Print completion already in progress, skipping duplicate");
       return;
     }
+    this.isHandlingCompletion = true;
+    // Clear watchdog immediately so checkWatchdog doesn't re-fire during async work
+    this.clearWatchdog();
+
+    console.log(`Print finished (Job ID: ${jobId})`);
 
     try {
+      if (!this.timelapseCapture.isCurrentlyCapturing()) {
+        console.log("No active timelapse capture to stop");
+        return;
+      }
+
       // Stop capture
       await this.stopTimelapseCapture();
 
@@ -166,6 +172,8 @@ export class PrintMonitor {
       console.error(
         `Error during timelapse completion: ${(error as Error).message}`
       );
+    } finally {
+      this.isHandlingCompletion = false;
     }
   }
 

@@ -7,9 +7,11 @@
     "prusa-timelapse": "dist/index.js"
   },
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && vite build",
+    "build:server": "tsc",
+    "build:frontend": "vite build",
     "start": "node dist/index.js",
-    "dev": "tsc && node dist/index.js",
+    "dev:frontend": "vite",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [
@@ -21,6 +23,10 @@
   "license": "ISC",
   "devDependencies": {
     "@types/node": "^25.0.6",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "vite": "^7.3.1"
+  },
+  "dependencies": {
+    "hls.js": "^1.6.15"
   }
 }
