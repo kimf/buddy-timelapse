@@ -21,7 +21,7 @@ export class TimelapseCapture {
     this.tempDir = resolve(this.config.tempDirectory);
   }
 
-  async startCapture(): Promise<void> {
+  async startCapture(startNumber: number = 1): Promise<void> {
     if (this.isCapturing) {
       throw new TimelapseError("Capture already in progress");
     }
@@ -42,7 +42,7 @@ export class TimelapseCapture {
     const outputPattern = join(this.tempDir, "img_%05d.jpg");
     const interval = this.config.captureInterval;
 
-    // ffmpeg command: ffmpeg -rtsp_transport tcp -i {rtspUrl} -vf fps=1/{interval} -y {outputPattern}
+    // ffmpeg command: ffmpeg -rtsp_transport tcp -i {rtspUrl} -vf fps=1/{interval} [-start_number N] -y {outputPattern}
     const ffmpegArgs = [
       "-rtsp_transport",
       "tcp",
@@ -50,9 +50,13 @@ export class TimelapseCapture {
       this.config.rtspUrl,
       "-vf",
       `fps=1/${interval}`,
-      "-y",
-      outputPattern,
     ];
+
+    if (startNumber > 1) {
+      ffmpegArgs.push("-start_number", startNumber.toString());
+    }
+
+    ffmpegArgs.push("-y", outputPattern);
 
     this.captureProcess = spawn("ffmpeg", ffmpegArgs, {
       stdio: ["ignore", "pipe", "pipe"],
