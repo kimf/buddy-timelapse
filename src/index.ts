@@ -60,7 +60,7 @@ async function main(): Promise<void> {
     // Start web UI (disabled if webPort is 0)
     const webPort = config.webPort ?? 3000;
     if (webPort > 0) {
-      createWebServer(config, webPort);
+      createWebServer(config, webPort, monitor);
     }
 
     console.log("Service started successfully. Press Ctrl+C to stop.");
@@ -76,11 +76,9 @@ async function main(): Promise<void> {
       // Periodic status check
       if (monitor.isCurrentlyMonitoring()) {
         const printId = monitor.getCurrentPrintId();
-        const capturing = monitor.isCapturing();
+        const state = monitor.getMonitorState();
         console.log(
-          `Status: Monitoring active | Print ID: ${
-            printId || "None"
-          } | Capturing: ${capturing}`
+          `Status: ${state} | Print ID: ${printId || "None"}`
         );
       }
     }, 60000); // Log status every minute
