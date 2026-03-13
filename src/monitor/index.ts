@@ -26,6 +26,7 @@ export class PrintMonitor {
   private capturedFrameCount: number = 0;
   private watchdogExpiry: number | null = null; // timestamp when watchdog expires
   private isHandlingCompletion = false;
+  private captureStartedAt: string = "";
 
   constructor(config: AppConfig) {
     this.config = config;
@@ -155,6 +156,14 @@ export class PrintMonitor {
       const startNum = this.capturedFrameCount + 1;
       await this.timelapseCapture.startCapture(startNum);
       this.monitorState = "CAPTURING";
+      if (!this.captureStartedAt) {
+        this.captureStartedAt = new Date().toISOString();
+      }
+      this.timelapseCapture.writeCaptureState(
+        this.trackedJobId!,
+        this.capturedFrameCount,
+        this.captureStartedAt
+      );
       console.log(`Timelapse capture started (frame offset: ${startNum})`);
       this.startWatchdog(this.trackedJobId!);
     } catch (error) {
@@ -167,6 +176,11 @@ export class PrintMonitor {
   private async transitionToPaused(): Promise<void> {
     console.log(`Print paused — stopping capture, preserving frames`);
     this.capturedFrameCount = this.timelapseCapture.getCapturedFrameCount();
+    this.timelapseCapture.writeCaptureState(
+      this.trackedJobId!,
+      this.capturedFrameCount,
+      this.captureStartedAt
+    );
     await this.stopTimelapseCapture();
     this.monitorState = "PAUSED";
   }
@@ -193,6 +207,7 @@ export class PrintMonitor {
       this.monitorState = "IDLE";
       this.trackedJobId = null;
       this.capturedFrameCount = 0;
+      this.captureStartedAt = "";
       this.isHandlingCompletion = false;
     }
   }
