@@ -230,6 +230,12 @@ export async function assembleVideo(
     assembleProcess.on("exit", (code, signal) => {
       if (code === 0) {
         console.log(`Video assembled successfully: ${outputPath}`);
+        // Generate a thumbnail next to the video
+        const thumbPath = outputPath.replace(/\.mp4$/i, ".thumb.jpg");
+        generateThumbnail(outputPath, thumbPath).then(
+          () => console.log(`Thumbnail saved: ${thumbPath}`),
+          (err) => console.warn(`Thumbnail generation failed: ${err.message}`)
+        );
         resolve();
       } else {
         reject(
@@ -239,5 +245,27 @@ export async function assembleVideo(
         );
       }
     });
+  });
+}
+
+/** Extract a single frame from a video and save as a JPEG thumbnail. */
+function generateThumbnail(
+  videoPath: string,
+  thumbPath: string
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const proc = spawn("ffmpeg", [
+      "-sseof", "-1",
+      "-i", videoPath,
+      "-vframes", "1",
+      "-vf", "scale=320:-1",
+      "-y",
+      thumbPath,
+    ], { stdio: ["ignore", "ignore", "ignore"] });
+
+    proc.on("exit", (code) =>
+      code === 0 ? resolve() : reject(new Error(`ffmpeg exit code ${code}`))
+    );
+    proc.on("error", reject);
   });
 }

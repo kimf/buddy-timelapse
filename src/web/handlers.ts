@@ -185,12 +185,26 @@ export async function handleVideoThumbnail(
     return;
   }
 
+  // Serve pre-generated thumbnail if it exists
+  const thumbPath = videoPath.replace(/\.mp4$/i, ".thumb.jpg");
+  if (existsSync(thumbPath)) {
+    const data = readFileSync(thumbPath);
+    res.writeHead(200, {
+      "Content-Type": "image/jpeg",
+      "Content-Length": data.length,
+      "Cache-Control": "public, max-age=86400",
+    });
+    res.end(data);
+    return;
+  }
+
+  // Fallback: generate on-the-fly
   return new Promise((done) => {
     const ffmpeg = spawn(
       "ffmpeg",
       [
+        "-sseof", "-1",
         "-i", videoPath,
-        "-ss", "00:00:02",
         "-vframes", "1",
         "-vf", "scale=320:-1",
         "-f", "image2pipe",
