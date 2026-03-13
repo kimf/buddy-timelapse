@@ -4,6 +4,7 @@ import { basename, extname, join, resolve } from "path";
 import { spawn } from "child_process";
 import { PrusaLinkClient } from "../api/client";
 import { AppConfig } from "../types/config";
+import { MonitorState } from "../monitor";
 import { HLS_DIR, getStreamManager } from "./stream";
 
 // ---------------------------------------------------------------------------
@@ -64,11 +65,17 @@ export function serveStatic(res: ServerResponse, filePath: string): void {
 
 export async function handleStatus(
   res: ServerResponse,
-  config: AppConfig
+  config: AppConfig,
+  getMonitorState?: () => MonitorState
 ): Promise<void> {
   const client = new PrusaLinkClient(config.prusaLink);
   try {
-    serveJSON(res, await client.getStatus());
+    const status = await client.getStatus();
+    const payload: Record<string, unknown> = { ...status };
+    if (getMonitorState) {
+      payload.monitorState = getMonitorState();
+    }
+    serveJSON(res, payload);
   } catch (err) {
     serveError(res, 502, (err as Error).message);
   }

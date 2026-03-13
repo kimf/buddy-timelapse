@@ -5,6 +5,8 @@ import { assembleVideo, TimelapseCapture } from "../timelapse";
 import { PrinterState } from "../types/api";
 import { AppConfig } from "../types/config";
 
+export type MonitorState = "IDLE" | "PREPARING" | "CAPTURING" | "PAUSED" | "FINISHING";
+
 export class MonitorError extends Error {
   constructor(message: string) {
     super(message);
@@ -19,7 +21,9 @@ export class PrintMonitor {
   private currentPrintId: number | null = null;
   private isMonitoring = false;
   private monitoringInterval: NodeJS.Timeout | null = null;
-  private lastPrinterState: PrinterState | null = null;
+  private monitorState: MonitorState = "IDLE";
+  private trackedJobId: number | null = null;
+  private capturedFrameCount: number = 0;
   private watchdogExpiry: number | null = null; // timestamp when watchdog expires
   private isHandlingCompletion = false;
 
@@ -75,30 +79,56 @@ export class PrintMonitor {
 
       console.log(`Printer state: ${currentState}, Job ID: ${currentJobId}`);
 
-      // Check for state transitions
-      const previousState = this.lastPrinterState;
+      const progress = status.job?.progress ?? 0;
 
-      // Print started
-      if (
-        previousState !== "PRINTING" &&
-        currentState === "PRINTING" &&
-        currentJobId !== null
-      ) {
-        await this.handlePrintStarted(currentJobId);
-      }
-      // Print finished/stopped - any transition from PRINTING to non-PRINTING
-      else if (previousState === "PRINTING" && currentState !== "PRINTING") {
-        await this.handlePrintFinished(currentJobId);
-      }
-      // If we're currently capturing and see PRINTING state, reset watchdog
-      else if (
-        this.timelapseCapture.isCurrentlyCapturing() &&
-        currentState === "PRINTING"
-      ) {
-        this.resetWatchdog();
+      switch (this.monitorState) {
+        case "IDLE":
+          if (currentState === "PRINTING" && currentJobId !== null) {
+            this.trackedJobId = currentJobId;
+            if (progress > 0) {
+              await this.transitionToCapturing();
+            } else {
+              this.monitorState = "PREPARING";
+              console.log(`Print preparing (Job ID: ${currentJobId}), waiting for progress > 0`);
+            }
+          }
+          break;
+
+        case "PREPARING":
+          if (currentState === "PRINTING" && progress > 0) {
+            await this.transitionToCapturing();
+          } else if (currentState !== "PRINTING" && currentState !== "PAUSED") {
+            console.log(`Print aborted during preparation (state: ${currentState})`);
+            this.monitorState = "IDLE";
+            this.trackedJobId = null;
+          }
+          break;
+
+        case "CAPTURING":
+          if (currentState === "PAUSED") {
+            await this.transitionToPaused();
+          } else if (currentState !== "PRINTING") {
+            await this.transitionToFinishing(currentJobId);
+          } else {
+            this.resetWatchdog();
+          }
+          break;
+
+        case "PAUSED":
+          if (currentState === "PRINTING") {
+            await this.transitionToCapturing();
+            console.log(`Print resumed (Job ID: ${currentJobId})`);
+          } else if (currentState !== "PAUSED") {
+            await this.transitionToFinishing(currentJobId);
+          } else {
+            this.resetWatchdog();
+          }
+          break;
+
+        case "FINISHING":
+          break;
       }
 
-      this.lastPrinterState = currentState;
       this.currentPrintId = currentJobId;
 
       // Check watchdog after processing status
@@ -116,63 +146,53 @@ export class PrintMonitor {
     }
   }
 
-  private async handlePrintStarted(jobId: number): Promise<void> {
-    console.log(`Print started (Job ID: ${jobId})`);
-
-    // Reject if already capturing (shouldn't happen, but safety check)
+  private async transitionToCapturing(): Promise<void> {
     if (this.timelapseCapture.isCurrentlyCapturing()) {
-      console.warn(
-        "Timelapse capture already in progress, rejecting new print"
-      );
+      this.monitorState = "CAPTURING";
       return;
     }
-
     try {
-      await this.timelapseCapture.startCapture();
-      console.log("Timelapse capture started");
-
-      // Start watchdog if enabled
-      this.startWatchdog(jobId);
+      const startNum = this.capturedFrameCount + 1;
+      await this.timelapseCapture.startCapture(startNum);
+      this.monitorState = "CAPTURING";
+      console.log(`Timelapse capture started (frame offset: ${startNum})`);
+      this.startWatchdog(this.trackedJobId!);
     } catch (error) {
-      console.error(
-        `Failed to start timelapse capture: ${(error as Error).message}`
-      );
+      console.error(`Failed to start timelapse capture: ${(error as Error).message}`);
+      this.monitorState = "IDLE";
+      this.trackedJobId = null;
     }
   }
 
-  private async handlePrintFinished(jobId: number | null): Promise<void> {
-    if (this.isHandlingCompletion) {
-      console.log("Print completion already in progress, skipping duplicate");
-      return;
-    }
+  private async transitionToPaused(): Promise<void> {
+    console.log(`Print paused — stopping capture, preserving frames`);
+    this.capturedFrameCount = this.timelapseCapture.getCapturedFrameCount();
+    await this.stopTimelapseCapture();
+    this.monitorState = "PAUSED";
+  }
+
+  private async transitionToFinishing(jobId: number | null): Promise<void> {
+    if (this.isHandlingCompletion) return;
     this.isHandlingCompletion = true;
-    // Clear watchdog immediately so checkWatchdog doesn't re-fire during async work
+    this.monitorState = "FINISHING";
     this.clearWatchdog();
 
     console.log(`Print finished (Job ID: ${jobId})`);
 
     try {
-      if (!this.timelapseCapture.isCurrentlyCapturing()) {
-        console.log("No active timelapse capture to stop");
-        return;
+      if (this.timelapseCapture.isCurrentlyCapturing()) {
+        await this.stopTimelapseCapture();
       }
-
-      // Stop capture
-      await this.stopTimelapseCapture();
-
-      // Assemble video
       const outputPath = this.generateOutputPath(jobId);
       await assembleVideo(this.config.timelapse, outputPath);
-
-      // Send notification
       await this.sendNotification(outputPath);
-
       console.log(`Timelapse completed: ${outputPath}`);
     } catch (error) {
-      console.error(
-        `Error during timelapse completion: ${(error as Error).message}`
-      );
+      console.error(`Error during timelapse completion: ${(error as Error).message}`);
     } finally {
+      this.monitorState = "IDLE";
+      this.trackedJobId = null;
+      this.capturedFrameCount = 0;
       this.isHandlingCompletion = false;
     }
   }
@@ -235,6 +255,10 @@ export class PrintMonitor {
     }
   }
 
+  getMonitorState(): MonitorState {
+    return this.monitorState;
+  }
+
   isCurrentlyMonitoring(): boolean {
     return this.isMonitoring;
   }
@@ -288,7 +312,7 @@ export class PrintMonitor {
       console.warn("Forcing timelapse completion due to watchdog");
 
       // Use current print ID if available, otherwise null
-      this.handlePrintFinished(this.currentPrintId).catch((error) => {
+      this.transitionToFinishing(this.currentPrintId).catch((error) => {
         console.error(
           `Error during watchdog-triggered completion: ${error.message}`
         );

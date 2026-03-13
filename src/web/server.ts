@@ -1,6 +1,7 @@
 import { createServer, IncomingMessage, ServerResponse } from "http";
 import { join } from "path";
 import { AppConfig } from "../types/config";
+import { PrintMonitor } from "../monitor";
 import {
   serveError,
   serveStatic,
@@ -18,7 +19,7 @@ import {
 // Vite builds the frontend to dist/web/frontend/ (sibling of this compiled file)
 const FRONTEND_DIR = join(__dirname, "frontend");
 
-export function createWebServer(config: AppConfig, port: number): void {
+export function createWebServer(config: AppConfig, port: number, monitor?: PrintMonitor): void {
   const server = createServer(
     (req: IncomingMessage, res: ServerResponse): void => {
       const method = req.method ?? "GET";
@@ -42,7 +43,8 @@ export function createWebServer(config: AppConfig, port: number): void {
 
       if (method === "GET") {
         if (pathname === "/api/status") {
-          handleStatus(res, config).catch(() =>
+          const getState = monitor ? () => monitor.getMonitorState() : undefined;
+          handleStatus(res, config, getState).catch(() =>
             serveError(res, 500, "Internal error")
           );
         } else if (pathname === "/api/camera.jpg") {
