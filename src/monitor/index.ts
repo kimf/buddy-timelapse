@@ -139,7 +139,13 @@ export class PrintMonitor {
    */
   private async resumeFromCrash(): Promise<void> {
     const state = this.timelapseCapture.readCaptureState();
-    if (!state) return;
+    if (!state) {
+      // No state file — but there might still be orphaned frames from
+      // a crash that happened before the state file was written.
+      // Rescue them so they don't get mixed into the next capture.
+      this.timelapseCapture.rescueOrphanedFrames();
+      return;
+    }
 
     const frameCount = this.timelapseCapture.getCapturedFrameCount();
     if (frameCount === 0) {
