@@ -1,7 +1,7 @@
 import { spawn } from "child_process";
 import { resolve } from "path";
 import { ApiError, PrusaLinkClient } from "../api/client";
-import { assembleVideo, TimelapseCapture } from "../timelapse";
+import { assembleVideo, TimelapseCapture, CaptureState } from "../timelapse";
 import { PrinterState } from "../types/api";
 import { AppConfig } from "../types/config";
 
@@ -27,6 +27,8 @@ export class PrintMonitor {
   private watchdogExpiry: number | null = null; // timestamp when watchdog expires
   private isHandlingCompletion = false;
   private captureStartedAt: string = "";
+  /** When non-null, the monitor is waiting to confirm a resumed session against the API. */
+  private pendingResume: CaptureState | null = null;
 
   constructor(config: AppConfig) {
     this.config = config;
@@ -42,6 +44,9 @@ export class PrintMonitor {
     console.log("Starting print monitoring...");
     this.isMonitoring = true;
 
+    // Check for a persisted capture session from a previous run
+    await this.resumeFromCrash();
+
     // Initial status check
     await this.checkStatus();
 
@@ -51,6 +56,56 @@ export class PrintMonitor {
         console.error(`Error during status check: ${error.message}`);
       });
     }, this.config.pollInterval * 1000);
+  }
+
+  /**
+   * Check for a persisted capture session from a previous server run.
+   * If frames and a valid state file exist, start capturing immediately
+   * (optimistic resume) to minimize the gap in the timelapse.
+   * The first checkStatus() call will confirm or reject the resume
+   * by comparing the stored job ID against the current printer job.
+   */
+  private async resumeFromCrash(): Promise<void> {
+    const state = this.timelapseCapture.readCaptureState();
+    if (!state) return;
+
+    const frameCount = this.timelapseCapture.getCapturedFrameCount();
+    if (frameCount === 0) {
+      console.log("Found capture state file but no frames — deleting stale state");
+      this.timelapseCapture.deleteCaptureState();
+      return;
+    }
+
+    console.log(
+      `Found capture state from previous session: job ${state.jobId}, ` +
+      `${state.frameCount} frames recorded, ${frameCount} frames on disk`
+    );
+
+    // Use the actual frame count on disk (may differ from state if crash
+    // happened between writing frames and updating state)
+    this.capturedFrameCount = frameCount;
+    this.trackedJobId = state.jobId;
+    this.captureStartedAt = state.startedAt;
+    this.pendingResume = state;
+
+    // Optimistic resume: start capturing immediately to minimize gap
+    try {
+      const startNum = frameCount + 1;
+      await this.timelapseCapture.startCapture(startNum);
+      this.monitorState = "CAPTURING";
+      console.log(
+        `Optimistic capture resumed from frame ${startNum} ` +
+        `(pending job ID confirmation)`
+      );
+    } catch (error) {
+      console.error(
+        `Failed to start optimistic capture: ${(error as Error).message}`
+      );
+      this.pendingResume = null;
+      this.trackedJobId = null;
+      this.capturedFrameCount = 0;
+      this.captureStartedAt = "";
+    }
   }
 
   async stopMonitoring(): Promise<void> {
