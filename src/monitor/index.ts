@@ -14,6 +14,55 @@ export class MonitorError extends Error {
   }
 }
 
+/**
+ * Polls the PrusaLink API on a configurable interval and drives the
+ * timelapse capture lifecycle in response to printer state changes.
+ *
+ * ## State machine
+ *
+ * ```
+ *  IDLE ──► PREPARING ──► CAPTURING ──► FINISHING ──► IDLE
+ *                              │
+ *                         PAUSED ◄──► CAPTURING
+ * ```
+ *
+ * - **IDLE** — no active print job; monitor is running but not capturing.
+ * - **PREPARING** — a print job has started but progress is 0%; waiting
+ *   for actual material to be deposited before starting frames.
+ * - **CAPTURING** — ffmpeg is actively writing frames from the RTSP stream.
+ * - **PAUSED** — the printer was paused; ffmpeg is stopped but frames are
+ *   preserved on disk for when printing resumes.
+ * - **FINISHING** — the print ended (completed, cancelled, or watchdog fired);
+ *   assembling the video, then returning to IDLE.
+ *
+ * Transitions:
+ * - IDLE → PREPARING: printer enters PRINTING state with progress == 0
+ * - IDLE/PREPARING → CAPTURING: printer enters PRINTING state with progress > 0
+ * - CAPTURING → PAUSED: printer enters PAUSED state
+ * - PAUSED → CAPTURING: printer returns to PRINTING state
+ * - CAPTURING/PAUSED → FINISHING: printer leaves PRINTING/PAUSED (finished, cancelled, error)
+ * - FINISHING → IDLE: assembly complete (or failed)
+ *
+ * ## Startup resume flow
+ *
+ * On startup, `resumeFromCrash()` checks for a leftover `capture-state.json`
+ * and existing frame files. If both are present, an *optimistic resume* is
+ * started immediately: ffmpeg begins capturing from `frameCount + 1` before
+ * the first API call. The next `checkStatus()` call confirms or rejects this
+ * by comparing the stored job ID with the current printer job ID. If they
+ * match, the resume continues; if not, the orphaned frames are moved to a
+ * recovery directory and the monitor resets to IDLE.
+ *
+ * ## Watchdog
+ *
+ * A watchdog timer is started whenever capture begins. It is reset on every
+ * poll cycle that sees the printer in PRINTING state. If the printer goes
+ * quiet for longer than `watchdogTimeout` seconds (e.g. due to a networking
+ * issue or the printer freezing without sending a finished/cancelled state),
+ * the watchdog fires and forces `transitionToFinishing()`, preventing the
+ * capture process from running indefinitely. Set `watchdogTimeout` to `0`
+ * or a negative value to disable the watchdog.
+ */
 export class PrintMonitor {
   private config: AppConfig;
   private apiClient: PrusaLinkClient;
@@ -27,7 +76,17 @@ export class PrintMonitor {
   private watchdogExpiry: number | null = null; // timestamp when watchdog expires
   private isHandlingCompletion = false;
   private captureStartedAt: string = "";
-  /** When non-null, the monitor is waiting to confirm a resumed session against the API. */
+
+  /**
+   * Holds the capture state read from disk during startup when an optimistic
+   * resume has been started but not yet confirmed against the live printer API.
+   *
+   * This acts as a one-shot flag: it is set by `resumeFromCrash()` and
+   * cleared by the very first `checkStatus()` call, regardless of whether
+   * the resume is confirmed or rejected. While non-null, `checkStatus()`
+   * performs the resume-confirmation logic before running the normal state
+   * machine.
+   */
   private pendingResume: CaptureState | null = null;
 
   constructor(config: AppConfig) {
@@ -36,6 +95,19 @@ export class PrintMonitor {
     this.timelapseCapture = new TimelapseCapture(config.timelapse);
   }
 
+  /**
+   * Start the monitoring loop.
+   *
+   * Startup sequence:
+   * 1. `resumeFromCrash()` — check for a persisted capture session and
+   *    start an optimistic resume if one is found.
+   * 2. Initial `checkStatus()` call — confirms or rejects the resume, and
+   *    picks up any job that was already printing when the server started.
+   * 3. Periodic polling — `checkStatus()` is called every
+   *    `config.pollInterval` seconds for the lifetime of the monitor.
+   *
+   * @throws {MonitorError} If monitoring has already been started.
+   */
   async startMonitoring(): Promise<void> {
     if (this.isMonitoring) {
       throw new MonitorError("Monitoring already started");
@@ -108,6 +180,14 @@ export class PrintMonitor {
     }
   }
 
+  /**
+   * Stop the monitoring loop and any active capture.
+   *
+   * Clears the polling interval and, if ffmpeg is currently running,
+   * stops the capture process via `stopCapture()` (SIGTERM with SIGKILL
+   * fallback). After this call the monitor instance is no longer usable
+   * and should be discarded.
+   */
   async stopMonitoring(): Promise<void> {
     if (!this.isMonitoring) {
       return;
@@ -127,6 +207,27 @@ export class PrintMonitor {
     }
   }
 
+  /**
+   * Single poll cycle: fetch printer status and drive the state machine.
+   *
+   * The method has two phases:
+   *
+   * **Phase 1 — Resume confirmation** (only on the first call after startup
+   * when `pendingResume` is non-null): compare the stored job ID with the
+   * current printer job ID. On a match the optimistic capture continues and
+   * the watchdog is started. On a mismatch the capture is stopped, orphaned
+   * frames are rescued, and the monitor resets to IDLE. Either way,
+   * `pendingResume` is cleared so this block never runs again.
+   *
+   * **Phase 2 — Normal state machine**: based on `monitorState` and the
+   * current printer state, call the appropriate transition method
+   * (`transitionToCapturing`, `transitionToPaused`, `transitionToFinishing`).
+   * After state processing the watchdog is checked to catch stalled printers.
+   *
+   * Errors from the API are logged but do not stop the monitor. The watchdog
+   * is still checked on API-error cycles so a stalled printer is eventually
+   * detected even if the API is temporarily unreachable.
+   */
   private async checkStatus(): Promise<void> {
     try {
       const status = await this.apiClient.getStatus();
@@ -253,6 +354,20 @@ export class PrintMonitor {
     }
   }
 
+  /**
+   * Transition from IDLE, PREPARING, or PAUSED into the CAPTURING state.
+   *
+   * If ffmpeg is already running (e.g. the optimistic resume path left it
+   * running), this method simply updates `monitorState` to CAPTURING and
+   * returns. Otherwise it:
+   * 1. Starts `ffmpeg` via `TimelapseCapture.startCapture()` with a frame
+   *    offset of `capturedFrameCount + 1` to continue numbering seamlessly.
+   * 2. Records `captureStartedAt` (once, on the very first capture start).
+   * 3. Writes the capture state file so the session survives a crash.
+   * 4. Starts the watchdog timer.
+   *
+   * On ffmpeg startup failure the state reverts to IDLE.
+   */
   private async transitionToCapturing(): Promise<void> {
     if (this.timelapseCapture.isCurrentlyCapturing()) {
       this.monitorState = "CAPTURING";
@@ -279,6 +394,15 @@ export class PrintMonitor {
     }
   }
 
+  /**
+   * Transition from CAPTURING into the PAUSED state.
+   *
+   * Before stopping ffmpeg, the current on-disk frame count is snapshotted
+   * into `capturedFrameCount` and the capture state file is updated. This
+   * ensures that when capture restarts on resume, the `startNumber` offset
+   * is accurate even if additional frames were written after the last state
+   * file update.
+   */
   private async transitionToPaused(): Promise<void> {
     console.log(`Print paused — stopping capture, preserving frames`);
     this.capturedFrameCount = this.timelapseCapture.getCapturedFrameCount();
@@ -291,6 +415,23 @@ export class PrintMonitor {
     this.monitorState = "PAUSED";
   }
 
+  /**
+   * Transition from CAPTURING or PAUSED into the FINISHING state, then
+   * back to IDLE once the video has been assembled (or assembly fails).
+   *
+   * Full completion flow:
+   * 1. Guard against concurrent calls with `isHandlingCompletion`.
+   * 2. Clear the watchdog so it does not fire again during assembly.
+   * 3. Stop the capture process if it is still running.
+   * 4. Generate the output file path via `generateOutputPath()`.
+   * 5. Assemble all frames into an MP4 with `assembleVideo()`.
+   * 6. Clean up frame files and delete the state file from disk.
+   * 7. Send a completion notification via the configured command.
+   * 8. Reset all tracking fields and return to IDLE regardless of errors.
+   *
+   * @param jobId - The PrusaLink job ID that just finished (may be `null`
+   *   if the printer reported no active job when finishing was detected).
+   */
   private async transitionToFinishing(jobId: number | null): Promise<void> {
     if (this.isHandlingCompletion) return;
     this.isHandlingCompletion = true;
@@ -333,6 +474,18 @@ export class PrintMonitor {
     }
   }
 
+  /**
+   * Generate the output file path for the assembled timelapse video.
+   *
+   * The filename is derived from the current UTC timestamp (colons and dots
+   * replaced with hyphens for filesystem compatibility) and the job ID,
+   * e.g. `timelapse_2024-01-15T10-30-00_job42.mp4`. The file is placed in
+   * the configured `outputDirectory`.
+   *
+   * @param jobId - The PrusaLink job ID, used as a suffix for easier
+   *   identification. When `null` (job ID unavailable), the suffix is omitted.
+   * @returns Absolute path to the output `.mp4` file.
+   */
   private generateOutputPath(jobId: number | null): string {
     const timestamp = new Date()
       .toISOString()
@@ -343,6 +496,22 @@ export class PrintMonitor {
     return resolve(this.config.timelapse.outputDirectory, filename);
   }
 
+  /**
+   * Execute the configured notification command after a timelapse completes.
+   *
+   * The command string from `config.notification.command` supports two
+   * placeholders that are substituted before execution:
+   * - `{outputPath}` — absolute path to the assembled `.mp4` file.
+   * - `{outputDir}` — the configured output directory.
+   *
+   * The command is run via the system shell (`{ shell: true }`), so shell
+   * features (pipes, redirects, environment variables) are supported.
+   * Notification failure is non-fatal: errors are logged but not re-thrown
+   * so that a broken notification hook does not prevent cleanup from
+   * completing.
+   *
+   * @param outputPath - Absolute path to the assembled timelapse video.
+   */
   private async sendNotification(outputPath: string): Promise<void> {
     try {
       // Execute the configured notification command
@@ -395,6 +564,18 @@ export class PrintMonitor {
     return this.timelapseCapture.isCurrentlyCapturing();
   }
 
+  /**
+   * Start (or restart) the watchdog timer for the given job.
+   *
+   * The watchdog guards against a printer that stops responding without ever
+   * transitioning to a terminal state (finished/cancelled/error). If the
+   * printer is not seen in PRINTING state within `watchdogTimeout` seconds
+   * of the last reset, `checkWatchdog()` fires `transitionToFinishing()`.
+   *
+   * The watchdog is disabled when `config.watchdogTimeout` is `<= 0`.
+   *
+   * @param jobId - The job ID being tracked (used only for the log message).
+   */
   private startWatchdog(jobId: number): void {
     // Only start watchdog if enabled (> 0)
     if (this.config.watchdogTimeout <= 0) {
@@ -444,6 +625,12 @@ export class PrintMonitor {
     }
   }
 
+  /**
+   * Clear the watchdog timer, preventing it from firing.
+   *
+   * Called at the start of `transitionToFinishing()` so the watchdog cannot
+   * trigger a second completion while assembly is already in progress.
+   */
   private clearWatchdog(): void {
     this.watchdogExpiry = null;
     console.log("Watchdog cleared");

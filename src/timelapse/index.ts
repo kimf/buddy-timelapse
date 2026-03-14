@@ -36,6 +36,45 @@ export interface CaptureState {
 /** Filename for the persisted capture state, stored in the temp directory. */
 const CAPTURE_STATE_FILENAME = "capture-state.json";
 
+/**
+ * Manages the ffmpeg capture process that grabs frames from the printer
+ * camera over RTSP and writes them as sequentially numbered JPEG files.
+ *
+ * ## Capture lifecycle
+ *
+ * 1. **start** — `startCapture()` spawns an ffmpeg process that continuously
+ *    pulls frames from the RTSP stream and writes them as
+ *    `img_00001.jpg`, `img_00002.jpg`, … into the temp directory.
+ * 2. **frames accumulate** — ffmpeg runs until `stopCapture()` is called.
+ *    The printer may be paused mid-print; in that case the capture process
+ *    is stopped and restarted later with a `startNumber` offset so
+ *    numbering stays contiguous.
+ * 3. **stop** — `stopCapture()` sends SIGTERM to ffmpeg and waits up to 5 s
+ *    for a graceful exit before escalating to SIGKILL.
+ * 4. **assemble** — the standalone `assembleVideo()` function consumes all
+ *    `img_*.jpg` files and produces the final MP4.
+ * 5. **cleanup** — `cleanupFrames()` deletes the JPEG files after a
+ *    successful assembly to keep the temp directory lean.
+ *
+ * ## Temp directory structure
+ *
+ * ```
+ * {tempDirectory}/
+ *   img_00001.jpg          ← captured frames (named by ffmpeg)
+ *   img_00002.jpg
+ *   …
+ *   capture-state.json     ← persisted CaptureState (written by this class)
+ *   recovered/             ← orphaned frames from previous crashed sessions
+ *     2024-01-15T10-30-00/
+ *       img_00001.jpg
+ * ```
+ *
+ * ## State file
+ *
+ * `capture-state.json` is written on every capture start and on every
+ * pause/stop so the monitor can resume after a server restart without
+ * losing already-captured frames or messing up frame numbering.
+ */
 export class TimelapseCapture {
   private config: TimelapseConfig;
   private captureProcess: ChildProcess | null = null;
@@ -47,6 +86,27 @@ export class TimelapseCapture {
     this.tempDir = resolve(this.config.tempDirectory);
   }
 
+  /**
+   * Start the ffmpeg frame-capture process.
+   *
+   * ffmpeg is invoked with the pattern:
+   * ```
+   * ffmpeg -rtsp_transport tcp -i {rtspUrl} -vf fps=1/{interval} [-start_number N] -y img_%05d.jpg
+   * ```
+   *
+   * The `-start_number` flag is passed only when `startNumber > 1` so that
+   * frames written in this session continue the numbering from where the
+   * previous session left off. This is critical for resume: if a capture
+   * was interrupted at frame 150, passing `startNumber = 151` makes ffmpeg
+   * begin writing `img_00151.jpg`, keeping the sequence contiguous for
+   * `assembleVideo()`.
+   *
+   * @param startNumber - First frame number to use (1-based). Pass `1` for
+   *   a brand-new capture, or `existingFrameCount + 1` when resuming after
+   *   a pause or crash. Defaults to `1`.
+   * @throws {TimelapseError} If a capture is already in progress, or if the
+   *   temp directory cannot be created.
+   */
   async startCapture(startNumber: number = 1): Promise<void> {
     if (this.isCapturing) {
       throw new TimelapseError("Capture already in progress");
@@ -114,6 +174,15 @@ export class TimelapseCapture {
     }
   }
 
+  /**
+   * Stop the running ffmpeg capture process gracefully.
+   *
+   * Sends SIGTERM to allow ffmpeg to flush any partially-written frame and
+   * exit cleanly. If ffmpeg has not exited within 5 seconds, SIGKILL is
+   * sent to ensure the process is terminated regardless.
+   *
+   * This method is a no-op if no capture is currently running.
+   */
   async stopCapture(): Promise<void> {
     if (!this.isCapturing || !this.captureProcess) {
       return;
@@ -145,6 +214,13 @@ export class TimelapseCapture {
     });
   }
 
+  /**
+   * Returns `true` if an ffmpeg capture process is currently running.
+   *
+   * This reflects the in-process state flag, not whether the ffmpeg binary
+   * is actually alive on the OS. The flag is set to `false` when the process
+   * exits or errors, so it stays accurate under normal operation.
+   */
   isCurrentlyCapturing(): boolean {
     return this.isCapturing;
   }
@@ -190,6 +266,17 @@ export class TimelapseCapture {
     }
   }
 
+  /**
+   * Count how many captured frames currently exist in the temp directory.
+   *
+   * The count is computed by scanning the filesystem for `img_*.jpg` files
+   * on every call — there is no in-memory counter. This ensures the value
+   * is always accurate, even if frames were written before this process
+   * started (e.g. after a resume from crash).
+   *
+   * @returns Number of `img_*.jpg` files present, or `0` if the directory
+   *   does not exist or cannot be read.
+   */
   getCapturedFrameCount(): number {
     try {
       const files = readdirSync(this.tempDir);
@@ -204,6 +291,12 @@ export class TimelapseCapture {
   /**
    * Persist the current capture state to disk so it survives server restarts.
    * Written on capture start and on capture stop (pause or finish).
+   *
+   * @param jobId - PrusaLink job ID for the active print.
+   * @param frameCount - Number of frames captured so far (used as the
+   *   `startNumber` offset when resuming).
+   * @param startedAt - ISO timestamp of when the overall capture session
+   *   originally started (preserved across pauses).
    */
   writeCaptureState(jobId: number, frameCount: number, startedAt: string): void {
     const state: CaptureState = { jobId, frameCount, startedAt };
@@ -218,6 +311,8 @@ export class TimelapseCapture {
   /**
    * Read the persisted capture state from disk.
    * Returns null if no state file exists, or if the file is corrupt/unreadable.
+   *
+   * @returns The stored {@link CaptureState}, or `null` if absent or invalid.
    */
   readCaptureState(): CaptureState | null {
     const statePath = join(this.tempDir, CAPTURE_STATE_FILENAME);
@@ -272,6 +367,28 @@ export class TimelapseCapture {
   }
 }
 
+/**
+ * Assemble all captured JPEG frames in the temp directory into a single
+ * MP4 timelapse video, then generate a thumbnail image beside it.
+ *
+ * ## ffmpeg pipeline
+ *
+ * 1. **Frame input** — reads `img_%05d.jpg` from the temp directory using
+ *    the configured output framerate (e.g. 30 fps).
+ * 2. **Video encoding** — encodes with H.264 (`libx264`) and `yuv420p` pixel
+ *    format for broad compatibility (QuickTime, browsers, media players).
+ * 3. **Output** — writes a `.mp4` file to `outputPath`. The output directory
+ *    is created if it does not already exist.
+ * 4. **Thumbnail extraction** — after a successful encode, a second ffmpeg
+ *    pass extracts the last frame of the video as a scaled JPEG thumbnail
+ *    saved alongside the video at `{outputPath without .mp4}.thumb.jpg`.
+ *    Thumbnail failure is non-fatal and only logs a warning.
+ *
+ * @param config - Timelapse configuration (temp directory, framerate, etc.).
+ * @param outputPath - Absolute path where the MP4 file should be written.
+ * @throws {TimelapseError} If no frames are found, the output directory
+ *   cannot be created, or ffmpeg exits with a non-zero code.
+ */
 export async function assembleVideo(
   config: TimelapseConfig,
   outputPath: string
