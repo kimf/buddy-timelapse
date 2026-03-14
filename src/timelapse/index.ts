@@ -61,9 +61,6 @@ export class TimelapseCapture {
       );
     }
 
-    // Move any orphaned frames from a previous crashed run to a recovery directory
-    this.rescueOrphanedFrames();
-
     // Start ffmpeg capture process
     const outputPattern = join(this.tempDir, "img_%05d.jpg");
     const interval = this.config.captureInterval;
@@ -152,7 +149,18 @@ export class TimelapseCapture {
     return this.isCapturing;
   }
 
-  private rescueOrphanedFrames(): void {
+  /**
+   * Move orphaned frames from a previous crashed capture run to a
+   * timestamped recovery directory. This prevents old frames from being
+   * mixed into a new capture session.
+   *
+   * Frames are moved to: {tempDir}/recovered/{ISO_timestamp}/
+   * This method is non-fatal — if it fails, capture can still proceed.
+   *
+   * Called by PrintMonitor during job mismatch on startup, or when no
+   * state file exists but orphaned frames are found.
+   */
+  rescueOrphanedFrames(): void {
     try {
       const files = readdirSync(this.tempDir);
       const frames = files.filter(

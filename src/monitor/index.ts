@@ -135,6 +135,57 @@ export class PrintMonitor {
 
       console.log(`Printer state: ${currentState}, Job ID: ${currentJobId}`);
 
+      // --- Resume confirmation ---
+      // If we have a pending resume from a previous crash, confirm
+      // whether the current printer job matches the saved session.
+      if (this.pendingResume) {
+        const savedJobId = this.pendingResume.jobId;
+        this.pendingResume = null; // Only check once
+
+        if (currentJobId === savedJobId) {
+          // Same job — confirmed resume. Continue capturing.
+          console.log(
+            `Resume confirmed: printer still on job ${savedJobId}`
+          );
+          this.startWatchdog(savedJobId);
+          // State is already CAPTURING from resumeFromCrash, continue normally
+        } else {
+          // Different job or no job — stop optimistic capture, recover frames
+          console.log(
+            `Job mismatch: state file has job ${savedJobId}, ` +
+            `printer has job ${currentJobId ?? "none"}`
+          );
+          if (this.timelapseCapture.isCurrentlyCapturing()) {
+            await this.stopTimelapseCapture();
+          }
+          this.timelapseCapture.rescueOrphanedFrames();
+          this.timelapseCapture.deleteCaptureState();
+          this.monitorState = "IDLE";
+          this.trackedJobId = null;
+          this.capturedFrameCount = 0;
+          this.captureStartedAt = "";
+
+          // If a different job is printing, start tracking it immediately
+          if (currentState === "PRINTING" && currentJobId !== null) {
+            this.trackedJobId = currentJobId;
+            const progress = status.job?.progress ?? 0;
+            if (progress > 0) {
+              await this.transitionToCapturing();
+            } else {
+              this.monitorState = "PREPARING";
+              console.log(
+                `New print preparing (Job ID: ${currentJobId}), ` +
+                `waiting for progress > 0`
+              );
+            }
+          }
+          // Update currentPrintId and return — don't run the normal
+          // state machine this tick since we already handled the transition
+          this.currentPrintId = currentJobId;
+          return;
+        }
+      }
+
       const progress = status.job?.progress ?? 0;
 
       switch (this.monitorState) {
