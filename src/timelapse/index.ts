@@ -63,8 +63,10 @@ const CAPTURE_STATE_FILENAME = "capture-state.json";
  *   img_00002.jpg
  *   …
  *   capture-state.json     ← persisted CaptureState (written by this class)
- *   recovered/             ← orphaned frames from previous crashed sessions
- *     2024-01-15T10-30-00/
+ *   finished/              ← archived frames from completed or orphaned sessions
+ *     89/                  ← keyed by print ID after successful assembly
+ *       img_00001.jpg
+ *     orphaned_2024-01-15T10-30-00/
  *       img_00001.jpg
  * ```
  *
@@ -247,7 +249,7 @@ export class TimelapseCapture {
         .toISOString()
         .replace(/[:.]/g, "-")
         .slice(0, -5);
-      const recoveryDir = join(this.tempDir, "recovered", timestamp);
+      const recoveryDir = join(this.tempDir, "finished", `orphaned_${timestamp}`);
       mkdirSync(recoveryDir, { recursive: true });
 
       for (const file of frames) {
@@ -255,7 +257,7 @@ export class TimelapseCapture {
       }
 
       console.warn(
-        `Rescued ${frames.length} orphaned frames to: ${recoveryDir}`
+        `Archived ${frames.length} orphaned frames to: ${recoveryDir}`
       );
     } catch (error) {
       // Non-fatal: log and continue so capture can still start
@@ -333,7 +335,7 @@ export class TimelapseCapture {
 
   /**
    * Delete the capture state file from disk.
-   * Called after successful video assembly or when frames are moved to recovered.
+   * Called after successful video assembly or when frames are archived.
    */
   deleteCaptureState(): void {
     const statePath = join(this.tempDir, CAPTURE_STATE_FILENAME);
