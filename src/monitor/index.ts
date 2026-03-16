@@ -76,6 +76,8 @@ export class PrintMonitor {
   private watchdogExpiry: number | null = null; // timestamp when watchdog expires
   private isHandlingCompletion = false;
   private captureStartedAt: string = "";
+  private ffmpegRestartCount: number = 0;
+  private static readonly MAX_FFMPEG_RESTARTS = 5;
 
   /**
    * Holds the capture state read from disk during startup when an optimistic
@@ -323,7 +325,27 @@ export class PrintMonitor {
             await this.transitionToPaused();
           } else if (currentState !== "PRINTING") {
             await this.transitionToFinishing(currentJobId);
+          } else if (!this.timelapseCapture.isCurrentlyCapturing()) {
+            // ffmpeg died while printer is still printing — restart capture (with throttle)
+            this.ffmpegRestartCount++;
+            if (this.ffmpegRestartCount <= PrintMonitor.MAX_FFMPEG_RESTARTS) {
+              console.warn(
+                `ffmpeg capture process died unexpectedly (attempt ${this.ffmpegRestartCount}/${PrintMonitor.MAX_FFMPEG_RESTARTS}), restarting...`
+              );
+              this.capturedFrameCount = this.timelapseCapture.getCapturedFrameCount();
+              this.timelapseCapture.writeCaptureState(
+                this.trackedJobId!,
+                this.capturedFrameCount,
+                this.captureStartedAt
+              );
+              await this.transitionToCapturing();
+            } else if (this.ffmpegRestartCount === PrintMonitor.MAX_FFMPEG_RESTARTS + 1) {
+              console.error(
+                `ffmpeg has died ${PrintMonitor.MAX_FFMPEG_RESTARTS} times, giving up on restart. Waiting for print to finish.`
+              );
+            }
           } else {
+            this.ffmpegRestartCount = 0;
             this.resetWatchdog();
           }
           break;
@@ -464,6 +486,7 @@ export class PrintMonitor {
       this.trackedJobId = null;
       this.capturedFrameCount = 0;
       this.captureStartedAt = "";
+      this.ffmpegRestartCount = 0;
       this.isHandlingCompletion = false;
     }
   }
