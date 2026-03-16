@@ -5,7 +5,6 @@ import {
   readFileSync,
   readdirSync,
   renameSync,
-  rmSync,
   unlinkSync,
   writeFileSync,
 } from "fs";
@@ -53,8 +52,8 @@ const CAPTURE_STATE_FILENAME = "capture-state.json";
  *    for a graceful exit before escalating to SIGKILL.
  * 4. **assemble** — the standalone `assembleVideo()` function consumes all
  *    `img_*.jpg` files and produces the final MP4.
- * 5. **cleanup** — `cleanupFrames()` deletes the JPEG files after a
- *    successful assembly to keep the temp directory lean.
+ * 5. **archive** — `archiveFrames(printId)` moves the JPEG files to a
+ *    `finished/{printId}/` subdirectory after a successful assembly.
  *
  * ## Temp directory structure
  *
@@ -346,23 +345,32 @@ export class TimelapseCapture {
   }
 
   /**
-   * Remove all captured frames (img_*.jpg) from the temp directory.
-   * Called after successful video assembly to keep the temp directory clean.
+   * Move all captured frames to a finished directory keyed by print ID.
+   * Called after successful video assembly to keep the temp directory clean
+   * while preserving frames for review or re-assembly.
+   *
+   * Frames are moved to: {tempDir}/finished/{printId}/
+   *
+   * @param printId - Identifier for the finished print (typically the
+   *   PrusaLink job ID). Used as the subdirectory name.
    */
-  cleanupFrames(): void {
+  archiveFrames(printId: string): void {
     try {
       const files = readdirSync(this.tempDir);
       const frames = files.filter(
         (f) => f.startsWith("img_") && f.endsWith(".jpg")
       );
+      if (frames.length === 0) return;
+
+      const archiveDir = join(this.tempDir, "finished", printId);
+      mkdirSync(archiveDir, { recursive: true });
+
       for (const file of frames) {
-        unlinkSync(join(this.tempDir, file));
+        renameSync(join(this.tempDir, file), join(archiveDir, file));
       }
-      if (frames.length > 0) {
-        console.log(`Cleaned up ${frames.length} frames from temp directory`);
-      }
+      console.log(`Archived ${frames.length} frames to: ${archiveDir}`);
     } catch (error) {
-      console.error(`Failed to clean up frames: ${(error as Error).message}`);
+      console.error(`Failed to archive frames: ${(error as Error).message}`);
     }
   }
 }
