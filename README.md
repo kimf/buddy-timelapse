@@ -161,6 +161,38 @@ docker compose restart
 docker compose ps
 ```
 
+### PM2 Usage (recommended for Raspberry Pi without Docker)
+
+PM2 is a process manager for Node.js that handles auto-restart on crash and starts the service on boot.
+
+1. Install ffmpeg and PM2:
+   ```bash
+   sudo apt install ffmpeg
+   npm install -g pm2
+   ```
+
+2. Build and start the service:
+   ```bash
+   npm run build
+   pm2 start dist/index.js --name buddy-timelapse -- /path/to/config.json
+   ```
+
+3. Save the process list and enable startup on boot:
+   ```bash
+   pm2 save
+   pm2 startup
+   # Copy and run the command it prints
+   ```
+
+#### PM2 Commands
+
+```bash
+pm2 logs buddy-timelapse    # view logs
+pm2 status                  # check service is running
+pm2 restart buddy-timelapse
+pm2 stop buddy-timelapse
+```
+
 ## How It Works
 
 1. **Monitoring**: The service polls the PrusaLink `/api/v1/status` endpoint
