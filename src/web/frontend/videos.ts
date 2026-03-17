@@ -73,7 +73,13 @@ async function fetchVideos(): Promise<void> {
       const thumb = `/api/videos/${encodeURIComponent(item.name)}/thumb.jpg`;
       const label = item.name.replace(/\.mp4$/i, "");
       const meta = `${fmtDate(item.mtime)} · ${fmtSize(item.size)}`;
-      grid.appendChild(buildCard(thumb, label, meta));
+      const card = buildCard(thumb, label, meta);
+      const link = document.createElement("a");
+      link.href = `/api/videos/${encodeURIComponent(item.name)}`;
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+      link.appendChild(card);
+      grid.appendChild(link);
     }
   } catch {
     // Leave previous state on network error
