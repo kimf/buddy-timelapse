@@ -1,5 +1,5 @@
-import { ServerResponse } from "http";
-import { existsSync, readdirSync, readFileSync, statSync } from "fs";
+import { IncomingMessage, ServerResponse } from "http";
+import { createReadStream, existsSync, readdirSync, readFileSync, statSync } from "fs";
 import { basename, extname, join, resolve } from "path";
 import { spawn } from "child_process";
 import { PrusaLinkClient } from "../api/client";
@@ -244,6 +244,65 @@ export async function handleVideoThumbnail(
       done();
     });
   });
+}
+
+export function handleVideoFile(
+  req: IncomingMessage,
+  res: ServerResponse,
+  config: AppConfig,
+  rawName: string
+): void {
+  const safeName = basename(rawName);
+  const videoPath = join(resolve(config.timelapse.outputDirectory), safeName);
+
+  if (!existsSync(videoPath) || !safeName.endsWith(".mp4")) {
+    serveError(res, 404, "Not found");
+    return;
+  }
+
+  const { size } = statSync(videoPath);
+  const rangeHeader = typeof req.headers["range"] === "string" ? req.headers["range"] : undefined;
+
+  if (rangeHeader) {
+    const match = rangeHeader.match(/bytes=(\d+)-(\d*)/);
+    if (!match) {
+      res.writeHead(416, { "Content-Range": `bytes */${size}` });
+      res.end();
+      return;
+    }
+    const start = parseInt(match[1], 10);
+    const end = match[2] ? parseInt(match[2], 10) : size - 1;
+
+    // Validate bounds
+    if (isNaN(start) || isNaN(end) || start > end || start >= size || end >= size) {
+      res.writeHead(416, { "Content-Range": `bytes */${size}` });
+      res.end();
+      return;
+    }
+
+    const chunkSize = end - start + 1;
+
+    res.writeHead(206, {
+      "Content-Type": "video/mp4",
+      "Content-Range": `bytes ${start}-${end}/${size}`,
+      "Accept-Ranges": "bytes",
+      "Content-Length": chunkSize,
+      "Cache-Control": "no-store",
+    });
+    const rangeStream = createReadStream(videoPath, { start, end });
+    rangeStream.on("error", () => serveError(res, 500, "Read error"));
+    rangeStream.pipe(res);
+  } else {
+    res.writeHead(200, {
+      "Content-Type": "video/mp4",
+      "Accept-Ranges": "bytes",
+      "Content-Length": size,
+      "Cache-Control": "no-store",
+    });
+    const fileStream = createReadStream(videoPath);
+    fileStream.on("error", () => serveError(res, 500, "Read error"));
+    fileStream.pipe(res);
+  }
 }
 
 // ---------------------------------------------------------------------------
