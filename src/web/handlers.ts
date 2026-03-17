@@ -287,7 +287,7 @@ export function handleVideoFile(
       "Content-Range": `bytes ${start}-${end}/${size}`,
       "Accept-Ranges": "bytes",
       "Content-Length": chunkSize,
-      "Cache-Control": "no-store",
+      "Cache-Control": "public, max-age=3600",
     });
     const rangeStream = createReadStream(videoPath, { start, end });
     rangeStream.on("error", () => serveError(res, 500, "Read error"));
@@ -297,7 +297,7 @@ export function handleVideoFile(
       "Content-Type": "video/mp4",
       "Accept-Ranges": "bytes",
       "Content-Length": size,
-      "Cache-Control": "no-store",
+      "Cache-Control": "public, max-age=3600",
     });
     const fileStream = createReadStream(videoPath);
     fileStream.on("error", () => serveError(res, 500, "Read error"));

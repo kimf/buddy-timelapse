@@ -60,28 +60,40 @@ export function createWebServer(config: AppConfig, port: number, monitor?: Print
           pathname.startsWith("/api/videos/") &&
           !pathname.endsWith("/thumb.jpg")
         ) {
-          const name = decodeURIComponent(pathname.slice("/api/videos/".length));
-          handleVideoFile(req, res, config, name);
+          try {
+            const name = decodeURIComponent(pathname.slice("/api/videos/".length));
+            handleVideoFile(req, res, config, name);
+          } catch {
+            serveError(res, 400, "Bad request");
+          }
         } else if (
           pathname.startsWith("/api/videos/") &&
           pathname.endsWith("/thumb.jpg")
         ) {
-          const name = decodeURIComponent(
-            pathname.slice("/api/videos/".length, -"/thumb.jpg".length)
-          );
-          handleVideoThumbnail(res, config, name).catch(() =>
-            serveError(res, 500, "Internal error")
-          );
+          try {
+            const name = decodeURIComponent(
+              pathname.slice("/api/videos/".length, -"/thumb.jpg".length)
+            );
+            handleVideoThumbnail(res, config, name).catch(() =>
+              serveError(res, 500, "Internal error")
+            );
+          } catch {
+            serveError(res, 400, "Bad request");
+          }
         } else if (pathname === "/api/recovered") {
           handleRecoveredList(res, config);
         } else if (
           pathname.startsWith("/api/recovered/") &&
           pathname.endsWith("/thumb.jpg")
         ) {
-          const name = decodeURIComponent(
-            pathname.slice("/api/recovered/".length, -"/thumb.jpg".length)
-          );
-          handleRecoveredThumbnail(res, config, name);
+          try {
+            const name = decodeURIComponent(
+              pathname.slice("/api/recovered/".length, -"/thumb.jpg".length)
+            );
+            handleRecoveredThumbnail(res, config, name);
+          } catch {
+            serveError(res, 400, "Bad request");
+          }
         } else {
           serveError(res, 404, "Not found");
         }
