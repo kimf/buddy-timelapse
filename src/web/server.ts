@@ -10,6 +10,7 @@ import {
   handleStreamStart,
   handleStreamStop,
   handleHlsFile,
+  handleVideoFile,
   handleVideoList,
   handleVideoThumbnail,
   handleRecoveredList,
@@ -55,6 +56,12 @@ export function createWebServer(config: AppConfig, port: number, monitor?: Print
           handleHlsFile(res, pathname.slice("/api/camera/hls/".length));
         } else if (pathname === "/api/videos") {
           handleVideoList(res, config);
+        } else if (
+          pathname.startsWith("/api/videos/") &&
+          !pathname.endsWith("/thumb.jpg")
+        ) {
+          const name = decodeURIComponent(pathname.slice("/api/videos/".length));
+          handleVideoFile(req, res, config, name);
         } else if (
           pathname.startsWith("/api/videos/") &&
           pathname.endsWith("/thumb.jpg")
