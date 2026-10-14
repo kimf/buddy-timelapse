@@ -228,6 +228,12 @@ section > h2 span { color: #888; font-weight: 400; }
 }
 
 /* ---- Responsive ---- */
+/* Many timelapses made the page so long that the camera and status scrolled out of view:
+   on wide screens the gallery scrolls inside its own column instead. */
+@media (min-width: 861px) {
+  .videos-section { max-height: calc(100vh - 100px); overflow-y: auto; }
+}
+
 @media (max-width: 860px) {
   main {
     grid-template-columns: 1fr;

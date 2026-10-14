@@ -51,11 +51,17 @@ function renderEmpty(grid: HTMLElement, text: string): void {
   grid.innerHTML = `<p class="empty">${text}</p>`;
 }
 
+// Rebuilding the grid resets its scroll position, so only rebuild when the list changed.
+let lastVideosKey = "";
+
 async function fetchVideos(): Promise<void> {
   try {
     const res = await fetch("/api/videos");
     if (!res.ok) return;
     const videos = (await res.json()) as VideoItem[];
+    const key = videos.map((v) => v.name + v.mtime).join("|");
+    if (key === lastVideosKey) return;
+    lastVideosKey = key;
 
     const grid = document.getElementById("videos");
     const countEl = document.getElementById("video-count");
