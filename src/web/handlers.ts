@@ -5,7 +5,7 @@ import { spawn } from "child_process";
 import { PrusaLinkClient } from "../api/client";
 import { AppConfig } from "../types/config";
 import { MonitorState } from "../monitor";
-import { HLS_DIR, getStreamManager } from "./stream";
+import { HLS_DIR, getStreamManager, touchStream } from "./stream";
 
 // ---------------------------------------------------------------------------
 // Generic helpers
@@ -93,6 +93,7 @@ export async function handleCameraSnapshot(
     const ffmpeg = spawn(
       "ffmpeg",
       [
+        "-timeout", "10000000",
         "-rtsp_transport", "tcp",
         "-i", config.timelapse.rtspUrl,
         "-vframes", "1",
@@ -156,6 +157,7 @@ export function handleStreamStop(
 
 export function handleHlsFile(res: ServerResponse, filename: string): void {
   const safeName = basename(filename);
+  touchStream();
   serveStatic(res, join(HLS_DIR, safeName));
 }
 

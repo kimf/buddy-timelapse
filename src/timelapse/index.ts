@@ -126,8 +126,11 @@ export class TimelapseCapture {
     const outputPattern = join(this.tempDir, "img_%05d.jpg");
     const interval = this.config.captureInterval;
 
-    // ffmpeg command: ffmpeg -rtsp_transport tcp -i {rtspUrl} -vf fps=1/{interval} [-start_number N] -y {outputPattern}
+    // ffmpeg command: ffmpeg -timeout 10000000 -rtsp_transport tcp -i {rtspUrl} -vf fps=1/{interval} [-start_number N] -y {outputPattern}
     const ffmpegArgs = [
+      // Exit instead of hanging forever when the camera restarts; the monitor then restarts capture.
+      "-timeout",
+      "10000000",
       "-rtsp_transport",
       "tcp",
       "-i",

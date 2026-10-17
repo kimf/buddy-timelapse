@@ -5,8 +5,13 @@ import { tmpdir } from "os";
 
 export const HLS_DIR = join(tmpdir(), "prusa-timelapse-hls");
 
+// Players re-fetch the playlist every segment (~2 s); this long without a request means nobody is watching.
+const IDLE_STOP_MS = 30_000;
+
 export class HlsStreamManager {
   private process: ChildProcess | null = null;
+  private lastRequest = 0;
+  private idleTimer: NodeJS.Timeout | null = null;
 
   constructor(
     private readonly rtspUrl: string,
@@ -28,20 +33,26 @@ export class HlsStreamManager {
     this.process = spawn(
       "ffmpeg",
       [
+        "-timeout", "10000000",
         "-rtsp_transport", "tcp",
         "-i", this.rtspUrl,
-        "-c:v", "libx264",
-        "-preset", "ultrafast",
-        "-tune", "zerolatency",
+        // The camera already sends H.264, so remux instead of re-encoding (~10% CPU instead of ~150% on a Pi 4).
+        // Segments can only start at keyframes, which the camera sends every ~2.3 s.
+        "-c:v", "copy",
         "-f", "hls",
         "-hls_time", "2",
         "-hls_list_size", "5",
-        "-hls_flags", "delete_segments+split_by_time",
+        "-hls_flags", "delete_segments",
         "-hls_segment_filename", join(this.hlsDir, "seg%d.ts"),
         join(this.hlsDir, "stream.m3u8"),
       ],
       { stdio: "ignore" }
     );
+
+    this.touch();
+    this.idleTimer ??= setInterval(() => {
+      if (Date.now() - this.lastRequest > IDLE_STOP_MS) this.stop();
+    }, 5_000);
 
     this.process.on("exit", () => {
       this.process = null;
@@ -57,6 +68,10 @@ export class HlsStreamManager {
   }
 
   stop(): void {
+    if (this.idleTimer) {
+      clearInterval(this.idleTimer);
+      this.idleTimer = null;
+    }
     if (this.process) {
       this.process.kill("SIGTERM");
       this.process = null;
@@ -68,6 +83,10 @@ export class HlsStreamManager {
     } catch {
       // Non-fatal
     }
+  }
+
+  touch(): void {
+    this.lastRequest = Date.now();
   }
 
   isStreaming(): boolean {
@@ -97,4 +116,8 @@ export function getStreamManager(rtspUrl: string): HlsStreamManager {
     _manager = new HlsStreamManager(rtspUrl, HLS_DIR);
   }
   return _manager;
+}
+
+export function touchStream(): void {
+  _manager?.touch();
 }
