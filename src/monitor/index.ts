@@ -474,9 +474,8 @@ export class PrintMonitor {
       }
       const outputPath = this.generateOutputPath(jobId);
       await assembleVideo(this.config.timelapse, outputPath);
-      // Archive frames and delete state file after successful assembly
-      const printId = jobId !== null ? String(jobId) : `unknown_${Date.now()}`;
-      this.timelapseCapture.archiveFrames(printId);
+      // Delete frames and state file after successful assembly
+      this.timelapseCapture.deleteFrames(outputPath);
       this.timelapseCapture.deleteCaptureState();
       await this.sendNotification(outputPath);
       console.log(`Timelapse completed: ${outputPath}`);

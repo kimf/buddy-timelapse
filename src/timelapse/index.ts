@@ -5,6 +5,7 @@ import {
   readFileSync,
   readdirSync,
   renameSync,
+  statSync,
   unlinkSync,
   writeFileSync,
 } from "fs";
@@ -52,8 +53,8 @@ const CAPTURE_STATE_FILENAME = "capture-state.json";
  *    for a graceful exit before escalating to SIGKILL.
  * 4. **assemble** — the standalone `assembleVideo()` function consumes all
  *    `img_*.jpg` files and produces the final MP4.
- * 5. **archive** — `archiveFrames(printId)` moves the JPEG files to a
- *    `finished/{printId}/` subdirectory after a successful assembly.
+ * 5. **clean up** — `deleteFrames(videoPath)` deletes the JPEG files once
+ *    the video exists and is non-empty.
  *
  * ## Temp directory structure
  *
@@ -63,8 +64,7 @@ const CAPTURE_STATE_FILENAME = "capture-state.json";
  *   img_00002.jpg
  *   …
  *   capture-state.json     ← persisted CaptureState (written by this class)
- *   finished/              ← archived frames from completed or orphaned sessions
- *     89/                  ← keyed by print ID after successful assembly
+ *   finished/              ← frames from orphaned sessions (no video was made)
  *       img_00001.jpg
  *     orphaned_2024-01-15T10-30-00/
  *       img_00001.jpg
@@ -350,32 +350,26 @@ export class TimelapseCapture {
   }
 
   /**
-   * Move all captured frames to a finished directory keyed by print ID.
-   * Called after successful video assembly to keep the temp directory clean
-   * while preserving frames for review or re-assembly.
+   * Delete all captured frames after a successful assembly. Frames are kept
+   * if the video is missing or empty, so they can be re-assembled by hand.
    *
-   * Frames are moved to: {tempDir}/finished/{printId}/
-   *
-   * @param printId - Identifier for the finished print (typically the
-   *   PrusaLink job ID). Used as the subdirectory name.
+   * @param videoPath - The assembled MP4.
    */
-  archiveFrames(printId: string): void {
+  deleteFrames(videoPath: string): void {
     try {
-      const files = readdirSync(this.tempDir);
-      const frames = files.filter(
+      if (!existsSync(videoPath) || statSync(videoPath).size === 0) {
+        console.warn(`Keeping frames: ${videoPath} is missing or empty`);
+        return;
+      }
+      const frames = readdirSync(this.tempDir).filter(
         (f) => f.startsWith("img_") && f.endsWith(".jpg")
       );
-      if (frames.length === 0) return;
-
-      const archiveDir = join(this.tempDir, "finished", printId);
-      mkdirSync(archiveDir, { recursive: true });
-
       for (const file of frames) {
-        renameSync(join(this.tempDir, file), join(archiveDir, file));
+        unlinkSync(join(this.tempDir, file));
       }
-      console.log(`Archived ${frames.length} frames to: ${archiveDir}`);
+      console.log(`Deleted ${frames.length} frames after assembling ${videoPath}`);
     } catch (error) {
-      console.error(`Failed to archive frames: ${(error as Error).message}`);
+      console.error(`Failed to delete frames: ${(error as Error).message}`);
     }
   }
 }
