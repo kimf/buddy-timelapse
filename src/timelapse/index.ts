@@ -92,7 +92,7 @@ export class TimelapseCapture {
    *
    * ffmpeg is invoked with the pattern:
    * ```
-   * ffmpeg -rtsp_transport tcp -i {rtspUrl} -vf fps=1/{interval} [-start_number N] -y img_%05d.jpg
+   * ffmpeg -skip_frame nokey -timeout 10000000 -rtsp_transport tcp -i {rtspUrl} -vf fps=1/{interval} [-start_number N] -y img_%05d.jpg
    * ```
    *
    * The `-start_number` flag is passed only when `startNumber > 1` so that
@@ -126,8 +126,12 @@ export class TimelapseCapture {
     const outputPattern = join(this.tempDir, "img_%05d.jpg");
     const interval = this.config.captureInterval;
 
-    // ffmpeg command: ffmpeg -timeout 10000000 -rtsp_transport tcp -i {rtspUrl} -vf fps=1/{interval} [-start_number N] -y {outputPattern}
+    // ffmpeg command: ffmpeg -skip_frame nokey -timeout 10000000 -rtsp_transport tcp -i {rtspUrl} -vf fps=1/{interval} [-start_number N] -y {outputPattern}
     const ffmpegArgs = [
+      // Decode keyframes only (every ~2 s on the Buddy3D): plenty for one frame per interval,
+      // ~7% CPU on a Pi 4 instead of ~38% for decoding every frame.
+      "-skip_frame",
+      "nokey",
       // Exit instead of hanging forever when the camera restarts; the monitor then restarts capture.
       "-timeout",
       "10000000",
